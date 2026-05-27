@@ -1,13 +1,24 @@
 const std = @import("std");
 
+const Point = @Vector(2, f32);
+
+pub fn makePointFromInt(x: anytype, y: anytype) Point {
+    const int_vec: @Vector(2, @TypeOf(x, y)) = .{ x, y };
+    return @as(Point, @floatFromInt(int_vec));
+}
+
+fn getDistance(v: Point, w: Point) f32 {
+    const diff = v - w;
+    return @sqrt(@reduce(.Add, diff * diff));
+}
+
 const Body = struct {
-    x: usize,
-    y: usize,
-    r: usize,
+    p: Point,
+    r: f32,
     i: f32,
 };
 
-pub fn getTerminalSizePosix(out_file: std.Io.File) !struct { rows: u16, cols: u16 } {
+fn getTerminalSizePosix(out_file: std.Io.File) !struct { rows: i32, cols: i32 } {
     var winsize: std.posix.winsize = .{
         .row = 0,
         .col = 0,
@@ -24,14 +35,40 @@ pub fn getTerminalSizePosix(out_file: std.Io.File) !struct { rows: u16, cols: u1
     };
 }
 
-fn absDiffUnsigned(x: usize, y: usize) usize {
+fn absDiffUnsigned(x: f32, y: f32) f32 {
     return if (x > y) x - y else y - x;
 }
 
-fn calculateDistance(x: usize, y: usize, sun: Body) f32 {
-    const x_dist: f32 = @floatFromInt(absDiffUnsigned(x, sun.x));
-    const y_dist: f32 = @floatFromInt(absDiffUnsigned(y, sun.y));
-    return @sqrt(x_dist * x_dist + y_dist * y_dist);
+fn calculateFalloff(distance: f32, intensity: f32) i32 {
+    return @as(i32, @trunc(@max(0.0, @min(1.0, (1 - distance / intensity))) * 255.0));
+}
+
+fn isInShadow(point: Point, sun: Body, moon: Body) bool {
+    const point_sun = sun.p - point;
+    const point_moon = moon.p - point;
+    const point_sun_length = @reduce(.Add, point_sun * point_sun);
+    const t = @reduce(.Add, point_moon * point_sun) / point_sun_length;
+    const projection = point + (@as(Point, @splat(t)) * (point_moon - point));
+    const x_d = sun.p[0] - projection[0];
+    const y_d = sun.p[1] - projection[1];
+    const d = @sqrt(x_d * x_d + y_d * y_d);
+    return d > moon.r;
+}
+
+fn calculateIntensity(point: Point, sun: Body, moon: Body) i32 {
+    if (getDistance(point, moon.p) <= moon.r) {
+        return 0;
+    }
+    if (getDistance(point, sun.p) <= sun.r) {
+        return 255;
+    }
+    if (isInShadow(point, sun, moon)) {
+        return calculateFalloff(getDistance(point, sun.p), sun.i);
+    } else {
+        return 25;
+    }
+    const distance: f32 = getDistance(point, sun.p);
+    return calculateFalloff(distance, sun.i);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -42,16 +79,21 @@ pub fn main(init: std.process.Init) !void {
     const stdout = &stdout_writer.interface;
     const target_frame_time_ns = (1000 * std.time.ns_per_ms) / 60;
     const size_result = getTerminalSizePosix(stdout_file);
-    const rows = if (size_result) |s| s.rows else |_| 32;
+    const rows = if (size_result) |s| s.rows - 1 else |_| 32;
     const cols = if (size_result) |s| s.cols else |_| 64;
-    for (0..cols) |sun_x| {
+    var sun = Body{ .p = makePointFromInt(0, @divTrunc(rows, 2)), .r = 0.0, .i = 80 };
+    var moon = Body{ .p = makePointFromInt(cols, @divTrunc(rows, 3)), .r = 2.0, .i = 30 };
+    while (sun.p[0] <= @as(f32, @floatFromInt(cols))) {
+        sun.p[0] += 1;
+        moon.p[0] -= 1;
         const start_time = std.Io.Timestamp.now(io, .awake);
-        const sun = Body{ .x = sun_x, .y = rows / 2, .r = 1, .i = 30 };
         try stdout.print("\x1B[2J\x1B[H", .{});
-        for (0..rows) |y| {
-            for (0..cols) |x| {
-                const v: f32 = 1 - (calculateDistance(x, y, sun) / sun.i);
-                const intensity: usize = @as(usize, @intFromFloat(@max(0.0, @min(1.0, v)) * 255.0));
+        var y: i32 = 0;
+        while (y < rows) : (y += 1) {
+            var x: i32 = 0;
+            while (x < cols) : (x += 1) {
+                const point = makePointFromInt(x, y);
+                const intensity = calculateIntensity(point, sun, moon);
                 try stdout.print("\x1b[38;2;{d};{d};{d}m█\x1b[0m", .{
                     intensity,
                     intensity,
