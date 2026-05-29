@@ -39,15 +39,18 @@ fn calculateFalloff(distance: f32, intensity: f32) i32 {
 }
 
 fn isInShadow(point: Point, emitter: Body, receiver: Body) bool {
-    const point_emitter = emitter.p - point;
-    const point_receiver = receiver.p - point;
-    const point_emitter_length = @reduce(.Add, point_emitter * point_emitter);
-    const t = @reduce(.Add, point_receiver * point_emitter) / point_emitter_length;
-    const projection = point + (@as(Point, @splat(t)) * (point_receiver - point));
-    const x_d = emitter.p[0] - projection[0];
-    const y_d = emitter.p[1] - projection[1];
-    const d = @sqrt(x_d * x_d + y_d * y_d);
-    return d > receiver.r;
+    const ray_dir = emitter.p - point;
+    const to_receiver = receiver.p - point;
+    const ray_len_sq = @reduce(.Add, ray_dir * ray_dir);
+    if (ray_len_sq == 0.0) return false; // Avoid division by zero if point is on emitter
+    const dot = @reduce(.Add, to_receiver * ray_dir);
+    var t = dot / ray_len_sq;
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+    const closest_point = point + (@as(Point, @splat(t)) * ray_dir);
+    const dist_vec = receiver.p - closest_point;
+    const dist_sq = @reduce(.Add, dist_vec * dist_vec);
+    return dist_sq < (receiver.r * receiver.r);
 }
 
 fn calculateIntensity(point: Point, emitter: Body, receiver: Body) i32 {
@@ -57,11 +60,8 @@ fn calculateIntensity(point: Point, emitter: Body, receiver: Body) i32 {
     if (getDistance(point, emitter.p) <= emitter.r) {
         return 255;
     }
-    if (isInShadow(point, emitter, receiver)) {
-        return 25;
-    }
-    const distance: f32 = getDistance(point, emitter.p);
-    return calculateFalloff(distance, emitter.i);
+    const shadow_effect: f32 = if (isInShadow(point, emitter, receiver)) 1.1 else 1;
+    return calculateFalloff(shadow_effect * getDistance(point, emitter.p), emitter.i);
 }
 
 fn drawFrame(stdout_file: std.Io.File, stdout: *std.Io.Writer, emitter: Body, receiver: Body) !void {
@@ -107,11 +107,17 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("\x1b[?1049h\x1b[?25l\x1b[?7l", .{});
     try stdout.flush();
     const target_frame_time_ns = (1000 * std.time.ns_per_ms) / 60;
-    var emitter = Body{ .p = .{ 0, 0.5 }, .r = 0.01, .i = 80 };
-    var receiver = Body{ .p = .{ 1, 0.3 }, .r = 0.01, .i = 30 };
-    while (emitter.p[0] <= @as(f32, 1)) {
-        emitter.p[0] += 0.01;
-        receiver.p[0] -= 0.01;
+    var emitter = Body{ .p = .{ 0, 0.5 }, .r = 0.01, .i = 0.5 };
+    var receiver = Body{ .p = .{ 1, 0.3 }, .r = 0.01, .i = 0 };
+    var speed: f32 = 0.01;
+    while (true) {
+        if (emitter.p[0] >= 1.0) {
+            speed = -@abs(speed);
+        } else if (emitter.p[0] <= 0.0) {
+            speed = @abs(speed);
+        }
+        emitter.p[0] += speed;
+        receiver.p[0] -= speed;
         const start_time = std.Io.Timestamp.now(io, .awake);
         try drawFrame(stdout_file, stdout, emitter, receiver);
         const elapsed_ns = start_time.untilNow(io, .awake).toNanoseconds();
