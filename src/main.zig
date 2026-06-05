@@ -125,7 +125,7 @@ fn drawFrame(stdout: *std.Io.Writer, screen: Screen, state: State) !void {
 pub fn main(init: std.process.Init) !void {
     // variable setup
     const io = init.io;
-    var stdout_buf: [4096]u8 = undefined;
+    var stdout_buf: [65536]u8 = undefined;
     var stdout_file = std.Io.File.stdout();
     var stdout_writer = stdout_file.writer(io, &stdout_buf);
     const stdout = &stdout_writer.interface;
