@@ -25,12 +25,12 @@ const State = struct {
 };
 
 const Screen = struct {
-    rows: i32,
-    cols: i32,
+    rows: usize,
+    cols: usize,
     pub fn init(stdout_file: std.Io.File) !Screen {
         return getTerminalSizePosix(stdout_file);
     }
-    pub fn get_point(self: *const Screen, x: i32, y: i32) Point {
+    pub fn get_point(self: *const Screen, x: usize, y: usize) Point {
         return .{
             @as(f32, @floatFromInt(x)) / @as(f32, @floatFromInt(self.cols)),
             @as(f32, @floatFromInt(y)) / @as(f32, @floatFromInt(2 * self.rows)),
@@ -65,8 +65,8 @@ fn absDiffUnsigned(x: f32, y: f32) f32 {
     return if (x > y) x - y else y - x;
 }
 
-fn calculateFalloff(distance: f32, intensity: f32) i32 {
-    return @as(i32, @trunc(@max(0.0, @min(1.0, (1 - distance / intensity))) * 255.0));
+fn calculateFalloff(distance: f32, intensity: f32) u8 {
+    return @as(u8, @trunc(@max(0.0, @min(1.0, (1 - distance / intensity))) * 255.0));
 }
 
 fn isInShadow(point: Point, emitter: Body, receiver: Body) bool {
@@ -84,7 +84,7 @@ fn isInShadow(point: Point, emitter: Body, receiver: Body) bool {
     return dist_sq < (receiver.r * receiver.r);
 }
 
-fn calculateIntensity(point: Point, state: State) i32 {
+fn calculateIntensity(point: Point, state: State) u8 {
     if (getDistance(point, state.receiver.p) <= state.receiver.r) {
         return 0;
     }
@@ -97,18 +97,31 @@ fn calculateIntensity(point: Point, state: State) i32 {
 
 /// Gets the dimension of the terminal, and uses the `state` to calculate the intensity, drawing the character to Io.
 fn drawFrame(stdout: *std.Io.Writer, screen: Screen, state: State) !void {
-    try stdout.print("\x1b[H", .{});
-    var y: i32 = 0;
-    while (y < screen.rows) : (y += 1) {
-        if (y != 0) {
-            try stdout.print("\n", .{});
-        }
-        var x: i32 = 0;
-        while (x < screen.cols) : (x += 1) {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+    const intensities = try allocator.alloc(u8, @intCast(screen.cols * screen.rows * 2));
+    defer allocator.free(intensities);
+    for (0..screen.rows) |y| {
+        for (0..screen.cols) |x| {
             const top_point = screen.get_point(x, 2 * y);
             const bottom_point = screen.get_point(x, (2 * y) + 1);
             const top_intensity = calculateIntensity(top_point, state);
             const bottom_intensity = calculateIntensity(bottom_point, state);
+            const index = (y * screen.cols + x) * 2;
+            intensities[index] = top_intensity;
+            intensities[index + 1] = bottom_intensity;
+        }
+    }
+    try stdout.print("\x1b[H", .{});
+    for (0..screen.rows) |y| {
+        if (y != 0) {
+            try stdout.print("\n", .{});
+        }
+        for (0..screen.cols) |x| {
+            const index = (y * screen.cols + x) * 2;
+            const top_intensity = intensities[index];
+            const bottom_intensity = intensities[index + 1];
             try stdout.print("\x1b[38;2;{d};{d};{d}m\x1b[48;2;{d};{d};{d}m▀\x1b[0m", .{
                 top_intensity,
                 top_intensity,
@@ -125,24 +138,29 @@ fn drawFrame(stdout: *std.Io.Writer, screen: Screen, state: State) !void {
 pub fn main(init: std.process.Init) !void {
     // variable setup
     const io = init.io;
-    var stdout_buf: [65536]u8 = undefined;
+    var stdout_buf: [1024 * 1024]u8 = undefined;
     var stdout_file = std.Io.File.stdout();
     var stdout_writer = stdout_file.writer(io, &stdout_buf);
     const stdout = &stdout_writer.interface;
     try stdout.print("\x1b[?1049h\x1b[?25l\x1b[?7l", .{});
     try stdout.flush();
     // state setup
-    const target_frame_time_ns = (1000 * std.time.ns_per_ms) / 60;
+    const fps = 60;
+    const target_frame_time_ns = (1000 * std.time.ns_per_ms) / fps;
     var state = State{ .emitter = Body{ .p = .{ 0, 0.5 }, .r = 0.01, .i = 0.5 }, .receiver = Body{ .p = .{ 1, 0.3 }, .r = 0.01, .i = 0 } };
     var speed: f32 = 0.01;
     // play loop
+    var frame_number: u64 = 0;
+    const start_time = std.Io.Timestamp.now(io, .awake);
     while (true) {
-        const start_time = std.Io.Timestamp.now(io, .awake);
-        speed = state.next(speed);
+        const frame_start_time = std.Io.Timestamp.now(io, .awake);
+        while ((frame_number * target_frame_time_ns) < start_time.untilNow(io, .awake).toNanoseconds()) : (frame_number += 1) {
+            speed = state.next(speed);
+        }
         const screen = try Screen.init(stdout_file);
         try drawFrame(stdout, screen, state);
         // wait to cap frame rate
-        const elapsed_ns = start_time.untilNow(io, .awake).toNanoseconds();
+        const elapsed_ns = frame_start_time.untilNow(io, .awake).toNanoseconds();
         if (elapsed_ns < target_frame_time_ns) {
             try io.sleep(std.Io.Duration.fromNanoseconds(target_frame_time_ns - elapsed_ns), .awake);
         }
