@@ -9,5 +9,4 @@ check:
 run:
     zig build run
 
-ci:
-    check
+ci: check
