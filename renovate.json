@@ -15,5 +15,19 @@
       "groupSlug": "nix-flake-inputs",
       "commitMessageTopic": "Nix flake inputs"
     }
+  ],
+  "customManagers": [
+    {
+      "description": "Track the minimum Zig compiler version pinned in build.zig.zon",
+      "customType": "regex",
+      "managerFilePatterns": ["/(^|/)build\\.zig\\.zon$/"],
+      "matchStrings": [
+        "\\.minimum_zig_version[ \\t]*=[ \\t]*\"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "zig",
+      "packageNameTemplate": "ziglang/zig",
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "semver"
+    }
   ]
 }
