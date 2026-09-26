@@ -1,25 +1,32 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
   "nix": {
     "enabled": true
   },
   "lockFileMaintenance": {
-    "enabled": true,
-    "schedule": ["before 5am on monday"]
+    "enabled": true
   },
   "packageRules": [
     {
-      "description": "Group updates to Nix flake inputs into a single PR",
+      "description": "Group Nix flake input updates into a single PR",
       "matchManagers": ["nix"],
+      "matchUpdateTypes": ["digest"],
       "groupName": "Nix flake inputs",
-      "groupSlug": "nix-flake-inputs",
-      "commitMessageTopic": "Nix flake inputs"
+      "groupSlug": "nix-flake-inputs"
+    },
+    {
+      "description": "Group non-major CI action updates in .forgejo/workflows; major bumps get their own PR",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest", "patch", "minor"],
+      "groupName": "CI workflow actions",
+      "groupSlug": "ci-workflow-actions"
     }
   ],
   "customManagers": [
     {
-      "description": "Track the minimum Zig compiler version pinned in build.zig.zon",
       "customType": "regex",
+      "description": "Track the minimum Zig compiler version pinned in build.zig.zon",
       "managerFilePatterns": ["/(^|/)build\\.zig\\.zon$/"],
       "matchStrings": [
         "\\.minimum_zig_version[ \\t]*=[ \\t]*\"(?<currentValue>[^\"]+)\""
